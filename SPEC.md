@@ -61,7 +61,7 @@ README.md, docs/internals/*.md, VERSION (start at 0.1.0), LICENSE (MIT)
 ## 4. Backend specification
 
 ### 4.1 CLI (`main.go`)
-- Flags: `-port int=7777` (0 = OS picks), `-host string=127.0.0.1`, `-no-open`, `-no-lsp`, `-no-git`, `-dev string`, `-version`, `-v`, `-update`, `-no-color`, `-quiet`, `-no-telemetry`, `-agent string`, `-no-agent`. The positional argument `version` also prints the version. The usage header is `scry <ver> - a code navigator`.
+- Flags: `-port int=7777` (0 = OS picks), `-host string=127.0.0.1`, `-no-open`, `-no-lsp`, `-no-git`, `-dev string`, `-version`, `-v`, `-update`, `-no-color`, `-quiet`, `-verbose`, `-no-telemetry`, `-agent string`, `-no-agent`. The positional argument `version` also prints the version. The usage header is `scry <ver> - a code navigator`. `-verbose` is added in step 18 (§13.5); ignore it before then.
 - `-version` prints `scry <ver> (<GOOS>/<GOARCH>)`.
 - `resolveTarget(target)`:
   1. Split a trailing `:line` or `:line:col` only if the literal path does not exist but the stripped path does. Handle Windows volume names.
@@ -532,7 +532,7 @@ Complete each phase fully (code + tests passing + `go vet` clean) and update `BU
 - [ ] `scry [flags] [file|dir]`. The default target is `.`
 - [ ] `scry path/to/file` opens that file. The workspace root is the file's git top-level, otherwise the cwd (if the file is under it), otherwise the file's parent directory
 - [ ] `scry file:42` and `scry file:42:7` jump to a line. The suffix is parsed only when the literal path doesn't exist
-- [ ] Flags: `-port` (7777; `0` = OS picks), `-host` (127.0.0.1), `-no-open`, `-no-lsp`, `-no-git`, `-dev DIR`, `-agent SPEC`, `-no-agent`, `-no-telemetry`, `-no-color`, `-quiet`, `-update`, `-version`/`-v`, and a `version` subcommand
+- [ ] Flags: `-port` (7777; `0` = OS picks), `-host` (127.0.0.1), `-no-open`, `-no-lsp`, `-no-git`, `-dev DIR`, `-agent SPEC`, `-no-agent`, `-no-telemetry`, `-no-color`, `-quiet`, `-verbose` (step 18, §13.5), `-update`, `-version`/`-v`, and a `version` subcommand
 - [ ] If the port is busy, try the next 99 ports, then fall back to an OS-assigned port
 - [ ] Opens the browser without blocking: honors `$BROWSER`; uses `open` on macOS; `rundll32`/`cmd start` on Windows; `xdg-open`/`sensible-browser`/`gio`/common browsers on Linux; `wslview`/PowerShell on WSL after a 500 ms delay
 - [ ] Clean terminal banner: workspace, URL, and agent, with color only on a TTY
@@ -622,5 +622,59 @@ Complete each phase fully (code + tests passing + `go vet` clean) and update `BU
 - [ ] Self-update (`--update`): SHA-256 checksum required, smoke-test the new binary, atomic replace (Windows `.old` dance), and a daily background check
 - [ ] Anonymous opt-out telemetry (only when a key is compiled in; `DO_NOT_TRACK`, `SCRY_TELEMETRY=0`)
 - [ ] Single static binary with embedded assets. Cross-compile to 15 targets. GitHub release workflow with checksums. `curl | sh` installer
+
+## 13. Addendum: GitHub Copilot, Codex, and concurrent dispatch (step 18)
+
+This section is additive. §4.11–§4.13 stand as the baseline that steps 01–17 build (three presets, one edit at a time). Step 18 layers the following on top, replacing only the specific behaviors called out below. Nothing here changes §1–§12 for anyone stopping at step 17.
+
+### 13.1 Additional presets
+Extend `agentPreset` with a model catalog, and `agentPresets` with two more entries. (`agy`, `opencode`, `aider`, and `goose` were considered and deliberately left out — see below.)
+
+```go
+type agentPreset struct {
+    Name         string
+    Args         []string
+    ModelFlag    string   // new
+    DefaultModel string   // new
+    Models       []string // new
+}
+```
+
+| Name | Args (`{prompt}` placeholder) | ModelFlag | DefaultModel | Models (first few) |
+| --- | --- | --- | --- | --- |
+| `claude` | `claude --permission-mode acceptEdits -p {prompt}` | `--model` | `haiku` | `haiku`, `sonnet`, `opus` |
+| `gemini` | `gemini --approval-mode auto_edit -p {prompt}` | `-m` | `gemini-2.5-flash-lite` | `gemini-2.5-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-pro` |
+| `cursor-agent` | `cursor-agent --force -p {prompt}` | `--model` | `gemini-3.6-flash-minimal` | `gemini-3.6-flash-minimal`, `gpt-5.4-nano-none`, `claude-sonnet-5-low`, … |
+| `codex` | `codex exec --ask-for-approval never {prompt}` | `-m` | `gpt-5-codex` | `gpt-5-codex`, `gpt-5-mini`, `gpt-5.1-codex-max`, `o3-mini`, … |
+| `github-copilot` | `copilot --allow-all-tools -p {prompt}` | `--model` | `claude-sonnet-4.5` | `claude-sonnet-4.5`, `claude-opus-4.5`, `claude-haiku-4.5`, `gpt-5` |
+
+`github-copilot` runs the standalone `copilot` CLI GitHub ships (separate from `gh`): `-p` for a non-interactive prompt, `--allow-all-tools` so it applies edits without an approval loop. It needs no special-casing anywhere else in `agent.go` — it's just another row in the table.
+
+Five presets, not nine: `agy` and `opencode` were dropped as redundant (a near-duplicate of `cursor-agent`'s model tiers, and a multi-provider router rather than a distinct harness, respectively), and `aider`/`goose` as long-tail choices that mostly add picker clutter for a first cut. Add any of them back later the same way `github-copilot` was added — one more row, no other code changes.
+
+### 13.2 Model flag insertion
+`resolveAgentSpec(spec, model)` gains a `model` parameter. Find the index of `{prompt}` in `Args`; if the preceding token starts with `-` (an option flag, e.g. `-p` or `-t`), insert `ModelFlag value` **before that flag**; otherwise insert it directly before `{prompt}`. That keeps a flag/value pair like `-p {prompt}` intact while still landing the model flag ahead of the prompt on presets with nothing between a flag and `{prompt}`. A caller-supplied command template (not a known preset name) may use a literal `{model}` token instead, substituted the same way `{prompt}` is. With no model requested, fall back to `DefaultModel`. The chosen model per harness is remembered in `settings.json` (extend `settings{Agent, Models map[string]string}`) and round-trips through `Select(name string, model ...string)`.
+
+`agentHarness` (the picker row) gains `Models []string` and `Model string`. `POST /api/agent/select` accepts an optional `model=` query param alongside `name=`.
+
+### 13.3 Live model discovery
+Every preset ships a static `Models` list so the picker renders with zero I/O. The first time a harness's models are requested, `discoverHarnessModels(name, bin, staticModels)` starts one background goroutine per harness name (guarded by a `discoveringModels` set so it never runs twice concurrently) that shells out to the CLI itself with a 5 s timeout — `claude -p /model`, `cursor-agent --list-models`, one small parser per harness that knows its own output shape — and swaps the parsed list into an in-memory cache (`discoveredModels map[string][]string`) once it succeeds. Every caller before that finishes, and forever after any failure, gets the static list straight back; discovery only ever upgrades what the picker shows, it can never block a request or downgrade a working list to an error.
+
+### 13.4 Concurrent dispatch, not single-flight
+Replace the single "a running job → `errAgentBusy`" rule from §4.11 with a **disjoint-range rule**: any number of harnesses may run at once, as long as no two running jobs share a file and an overlapping line range.
+
+- `overlapLocked(rel, l1, l2)` scans `m.jobs` for a running job on the same `Path` whose range intersects `[l1,l2]` (`l1 <= j.l2 && j.l1 <= l2`). Different paths, or disjoint ranges on the same path, run together.
+- `Start` checks this once under `m.mu` before doing any I/O (fast rejection for the common case), then reads the line-range snippet and probes git status **outside** the lock — both can block on disk or a subprocess — then re-acquires `m.mu` and **checks again** before registering the job. A second dispatch can race into existence and finish entirely inside that window, so the recheck is what makes the guarantee correct rather than merely usually correct.
+- This is the technique worth keeping if this kit is rebuilt from scratch: it turns "one edit at a time" into "one edit per region at a time" for free, reusing the line range the UI already collects for the prompt, at the cost of one extra `O(running jobs)` scan instead of serializing every dispatch behind a mutex held across a subprocess call.
+
+### 13.5 `-verbose`
+A `-verbose` flag (`main.go`) sets a package-level `uiVerbose bool`. When set: `server.go` logs each request line, non-empty search queries, and symbol lookups to the terminal as they happen; `agent.go` prints the exact prompt handed to a harness (`uiVerbosePrompt(jobID, harnessName, prompt, w)`) immediately before `run` execs it. Off by default, so a normal session stays quiet — it's the only way to see precisely what a harness received when an edit goes wrong.
+
+### 13.6 Checklist
+- [ ] Five harness presets (`claude`, `gemini`, `cursor-agent`, `codex`, `github-copilot`), each with a model catalog and a model flag inserted in the right place relative to `{prompt}`
+- [ ] A model picker in the harness UI, persisted per harness in `settings.json`
+- [ ] Live model discovery upgrades the static list in the background without ever blocking or erroring the picker
+- [ ] Two edits on disjoint line ranges (same file or different files) run concurrently; an overlapping range is refused with the existing "already running" message
+- [ ] `-verbose` prints requests, searches, symbol lookups, and agent prompts; silent by default
 
 

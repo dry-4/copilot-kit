@@ -1,12 +1,13 @@
 # scry Build Kit for GitHub Copilot (Agent mode, Claude Opus 5)
 
-A ready-to-copy kit for rebuilding scry from scratch with GitHub Copilot in VS Code. The work is split into **17 small steps**, each run in its own chat. Each step is sized to fit comfortably in one context window and ends tested and committed.
+A ready-to-copy kit for rebuilding scry from scratch with GitHub Copilot in VS Code. The work is split into **18 small steps**, each run in its own chat. Each step is sized to fit comfortably in one context window and ends tested and committed.
 
 ## What's in the kit
 
 ```
 copilot-kit/
 ├── SPEC.md                              Full specification (§1–§11) + feature checklist (§12)
+│                                        + step 18 addendum (§13)
 ├── .github/
 │   ├── copilot-instructions.md          Auto-loaded into every Copilot chat: context rules,
 │   │                                    engineering rules, definition of done, HANDOFF format
@@ -28,6 +29,7 @@ copilot-kit/
 │       ├── 15-agent-ui.prompt.md        │
 │       ├── 16-hardening-e2e.prompt.md   │
 │       ├── 17-docs-final.prompt.md      ┘
+│       ├── 18-multi-harness.prompt.md   Part 5: Codex + GitHub Copilot, concurrent dispatch
 │       └── resume.prompt.md             Recover an interrupted or broken step
 └── README.md                            This file (not needed in the new repo)
 ```
@@ -80,7 +82,7 @@ If your VS Code version reports that `mode: agent` in the prompt-file header is 
 
 ## 2. How to run each step
 
-For every step, in order `01` → `17`:
+For every step, in order `01` → `18`:
 
 1. **Open a new chat.** Use the `+` button, not an existing chat. This matters more than anything else in the kit.
 2. Set the chat mode dropdown to **Agent** and the model picker to **Claude Opus 5**.
@@ -90,7 +92,7 @@ For every step, in order `01` → `17`:
    - `git log --oneline | head -3` shows a `Step NN: …` commit
    - `go test ./... 2>&1 | tail -5` passes
    - `HANDOFF.md` looks sensible (skim it)
-   - for UI steps (04, 06, 07, 08, 11, 15): run `go run . .`, open the browser, and try the step's "Verify" list yourself
+   - for UI steps (04, 06, 07, 08, 11, 15, 18): run `go run . .`, open the browser, and try the step's "Verify" list yourself
 6. Only then start the next step, in a **new chat**.
 
 ### If a chat stops early, errors out, or gets confused
@@ -121,6 +123,7 @@ For every step, in order `01` → `17`:
 | 15 | Agent UI | UI | **High** | Edit and undo from the source and diff views |
 | 16 | Hardening, E2E, performance | Go | Medium | Security table + performance numbers |
 | 17 | Docs + acceptance | Docs | Low | README, internals docs, `ACCEPTANCE.md` |
+| 18 | Multi-harness support | Go + UI | Medium | 5 harnesses incl. GitHub Copilot; concurrent edits on disjoint ranges; `-verbose` |
 
 ---
 
@@ -131,9 +134,9 @@ For every step, in order `01` → `17`:
 - **Keep `SPEC.md` the source of truth.** To change a feature, edit `SPEC.md` first and commit. Don't rely on telling a chat, because the next chat won't see it.
 - **Steer with short follow-ups inside the same chat:** "run the failing test with -run and fix it", "you're reading too much; use grep and line ranges", "stop and update HANDOFF.md now".
 - **Watch for scope creep.** If a chat starts building a later step's feature, tell it to stop and leave a stub.
-- **Keep an eye on premium requests.** Opus 5 is a premium model in Copilot, and 17 agent sessions use a meaningful number of requests. Steps 01, 05, 12 and 17 are the most mechanical, so a cheaper model is a reasonable choice there if you need to save.
+- **Keep an eye on premium requests.** Opus 5 is a premium model in Copilot, and 18 agent sessions use a meaningful number of requests. Steps 01, 05, 12 and 17 are the most mechanical, so a cheaper model is a reasonable choice there if you need to save.
 - **Don't use Copilot's cloud coding agent** (assigning GitHub issues) for UI steps, because it can't check the browser UI. It's usable for backend-only steps (03, 05, 09, 10, 12, 13, 14, 16) if you set up Go and Node in its environment, but VS Code Agent mode is the smoother path for this kit.
 
 ## 5. When it's done
 
-`ACCEPTANCE.md` (written in step 17) lists every feature with evidence and a ✅/⚠️/❌ status. Work through any ⚠️ or ❌ items with `/resume <describe the item>` in fresh chats.
+`ACCEPTANCE.md` (written in step 17, touched up in step 18) lists every feature with evidence and a ✅/⚠️/❌ status. Work through any ⚠️ or ❌ items with `/resume <describe the item>` in fresh chats.
